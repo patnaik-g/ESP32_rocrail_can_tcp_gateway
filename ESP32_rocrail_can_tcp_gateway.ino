@@ -7,7 +7,7 @@
 */
 
 #define PROJECT "rocrail_can_tcp_gateway"
-#define VERSION "1.3.1"
+#define VERSION "1.3.1_V6_working"
 #define AUTHOR "Christophe BOBILLE - www.locoduino.org"
 
 //----------------------------------------------------------------------------------------
@@ -27,6 +27,7 @@
 #include <freertos/task.h>
 #include <freertos/queue.h>
 
+//#define VERBOSE
 #define debug Serial
 #define LED_BUILTIN 2
 
@@ -55,6 +56,7 @@ uint16_t rrHash; // for Rocrail hash
 //----------------------------------------------------------------------------------------
 #include <WiFi.h>
 #include <ESPmDNS.h>
+//#include <ArduinoOTA.h>
 const char *ssid = "patnaik";
 const char *password = "2010Equinox!";
 const char *hostname = "Gleisbox";
@@ -87,8 +89,9 @@ void WiFiEvent(WiFiEvent_t event) {
 
 QueueHandle_t canToTcpQueue;
 QueueHandle_t tcpToCanQueue;
+#ifdef VERBOSE
 QueueHandle_t debugQueue; // Queue for debug messages
-
+#endif
 //----------------------------------------------------------------------------------------
 //  Debug declaration
 //----------------------------------------------------------------------------------------
@@ -103,8 +106,9 @@ void CANReceiveTask(void *pvParameters);
 void TCPSendTask(void *pvParameters);
 void TCPReceiveTask(void *pvParameters);
 void CANSendTask(void *pvParameters);
+#ifdef VERBOSE
 void debugFrameTask(void *pvParameters); // Debug task
-
+#endif
 //----------------------------------------------------------------------------------------
 //   SETUP
 //----------------------------------------------------------------------------------------
@@ -141,7 +145,7 @@ void setup()
   else
     debug.print("Configuration CAN OK\n\n");
 
-  WiFi.setHostname(hostname);
+  WiFi.setHostname("Gleisbox");
   WiFi.mode(WIFI_STA);
   WiFi.onEvent(WiFiEvent); // Register the WiFi event handler
   WiFi.begin(ssid, password);
@@ -156,6 +160,7 @@ void setup()
     debug.println("Error setting up MDNS responder!");
     delay(500);
   }
+  MDNS.addService("mbus","tcp",port);
   debug.print("\nWiFi connected, IP address: ");
   debug.print(WiFi.localIP());
   debug.printf(", Port: %d\nHostname: ", port);
@@ -171,7 +176,7 @@ void setup()
     client = server.available();
     if (client) break;
     debug.print("\n\nWaiting for connection from Rocrail... ");
-    delay(5000);
+    delay(200);
     led = not led;
     digitalWrite(LED_BUILTIN, led);
   }
@@ -182,6 +187,7 @@ void setup()
   {
     if (client.available()) { // if there's bytes to read from the client,
       rb = client.readBytes(cBuffer, BUFFER_SIZE);
+      MDNS.end();       // done with mDNS
       break;
     }
     delay(1000);
@@ -221,15 +227,17 @@ void setup()
   // Create queues
   canToTcpQueue = xQueueCreate(100, sizeof(CANMessage));
   tcpToCanQueue = xQueueCreate(100, BUFFER_SIZE * sizeof(byte));
+#ifdef VERBOSE
   debugQueue = xQueueCreate(100, sizeof(CANMessage)); // Create debug queue
-
+#endif
   // Create tasks
   xTaskCreatePinnedToCore(CANReceiveTask, "CANReceiveTask", 4 * 1024, NULL, 3, NULL, 0); // priority 3 on core 0
   xTaskCreatePinnedToCore(TCPSendTask, "TCPSendTask", 4 * 1024, NULL, 5, NULL, 1);       // priority 5 on core 1
   xTaskCreatePinnedToCore(TCPReceiveTask, "TCPReceiveTask", 4 * 1024, NULL, 3, NULL, 1); // priority 3 on core 1
   xTaskCreatePinnedToCore(CANSendTask, "CANSendTask", 4 * 1024, NULL, 5, NULL, 0);       // priority 5 on core 0
+#ifdef VERBOSE
   xTaskCreatePinnedToCore(debugFrameTask, "debugFrameTask", 2 * 1024, NULL, 1, NULL, 1); // debug task with priority 1 on core 1
-
+#endif
 } // end setup
 
 //----------------------------------------------------------------------------------------
@@ -253,7 +261,9 @@ void CANReceiveTask(void *pvParameters)
     if (ACAN_ESP32::can.receive(frameIn))
     {
       xQueueSend(canToTcpQueue, &frameIn, portMAX_DELAY);
+#ifdef VERBOSE
       xQueueSend(debugQueue, &frameIn, 10); // send to debug queue
+#endif
     } else {
         vTaskDelay(1); // Avoid busy-waiting
     }
@@ -279,12 +289,10 @@ void TCPSendTask(void *pvParameters)
         sBuffer[4] = frameIn.len;
         memcpy(sBuffer+5, frameIn.data, 8);
         client.write(sBuffer, BUFFER_SIZE);
-        xQueueSend(debugQueue, &frameIn, 10); // send to debug queue
       }
       else {  // connection to Rocrail broken
-        delay(10000);
+        delay(5000);
         if (!client.connected()) {
-          Serial.print("\n\n   RESTART ROCRAIL!\n\n");
           debug.print("\n\n   RESTART ROCRAIL!\n\n");
           ESP.restart();
         }
@@ -335,7 +343,9 @@ void CANSendTask(void *pvParameters)
       // Directly copy the data to frameOut using memcpy for better performance
       memcpy(frameOut.data, &buffer[5], frameOut.len);
       const bool ok = ACAN_ESP32::can.tryToSend(frameOut);
+#ifdef VERBOSE
       xQueueSend(debugQueue, &frameOut, 10); // send to debug queue
+#endif
     }
   }
 }
@@ -343,7 +353,7 @@ void CANSendTask(void *pvParameters)
 //----------------------------------------------------------------------------------------
 //   debugFrameTask
 //----------------------------------------------------------------------------------------
-
+#ifdef VERBOSE
 void debugFrameTask(void *pvParameters)
 {
   CANMessage frame;
@@ -355,7 +365,7 @@ void debugFrameTask(void *pvParameters)
     }
   }
 }
-
+#endif
 //----------------------------------------------------------------------------------------
 //   debugFrame
 //----------------------------------------------------------------------------------------
