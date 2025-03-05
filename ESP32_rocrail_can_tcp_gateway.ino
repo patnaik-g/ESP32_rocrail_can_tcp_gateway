@@ -56,7 +56,8 @@ uint16_t rrHash; // for Rocrail hash
 //----------------------------------------------------------------------------------------
 #include <WiFi.h>
 #include <ESPmDNS.h>
-//#include <ArduinoOTA.h>
+#define NO_OTA_PORT
+#include <ArduinoOTA.h>
 const char *ssid = "patnaik";
 const char *password = "2010Equinox!";
 const char *hostname = "Gleisbox";
@@ -155,12 +156,14 @@ void setup()
     delay(500);
     debug.print(".");
   }
+  ArduinoOTA.begin();
   // Initialize mDNS
   while (!MDNS.begin(hostname)) {   // Set the hostname to "esp32.local"
     debug.println("Error setting up MDNS responder!");
     delay(500);
   }
   MDNS.addService("mbus","tcp",port);
+  MDNS.addService("arduino","tcp",3232);
   debug.print("\nWiFi connected, IP address: ");
   debug.print(WiFi.localIP());
   debug.printf(", Port: %d\nHostname: ", port);
@@ -168,13 +171,14 @@ void setup()
   debug.println(".local");
   server.begin();
 
-  uint8_t led = HIGH;
+  uint8_t led = LOW;
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, led);
 
   while (!client) {   // listen for incoming clients
     client = server.available();
     if (client) break;
+    ArduinoOTA.handle();
     debug.print("\n\nWaiting for connection from Rocrail... ");
     delay(200);
     led = not led;
