@@ -58,9 +58,10 @@ uint16_t rrHash; // for Rocrail hash
 #include <ESPmDNS.h>
 #define NO_OTA_PORT
 #include <ArduinoOTA.h>
-const char *ssid = "patnaik";
-const char *password = "2010Equinox!";
-const char *hostname = "Gleisbox";
+#include "WiFi_info.h"  //  this file contains WiFi SSID, password, and hostname
+const char *ssid = WIFI_SSID;
+const char *password = WIFI_PASSWORD;
+const char *hostname = WIFI_HOSTNAME;
 const uint port = 15731;
 WiFiServer server(port);
 WiFiClient client;
@@ -72,12 +73,8 @@ WiFiClient client;
 void WiFiEvent(WiFiEvent_t event) {
     switch (event) {
         case WIFI_EVENT_STA_DISCONNECTED:
-            debug.println("WiFi disconnected! Attempting to reconnect...");
-            WiFi.reconnect();
-            break;
-        case IP_EVENT_STA_GOT_IP:
-            debug.print("WiFi reconnected. IP Address: ");
-            debug.println(WiFi.localIP());
+            debug.println("WiFi disconnected! Restarting...");
+		    ESP.restart();
             break;
         default:
             break;
@@ -146,7 +143,7 @@ void setup()
   else
     debug.print("Configuration CAN OK\n\n");
 
-  WiFi.setHostname("Gleisbox");
+  WiFi.setHostname(hostname);
   WiFi.mode(WIFI_STA);
   WiFi.onEvent(WiFiEvent); // Register the WiFi event handler
   WiFi.begin(ssid, password);
@@ -158,12 +155,12 @@ void setup()
   }
   ArduinoOTA.begin();
   // Initialize mDNS
-  while (!MDNS.begin(hostname)) {   // Set the hostname to "esp32.local"
+  while (!MDNS.begin(hostname)) {   // Set the hostname
     debug.println("Error setting up MDNS responder!");
     delay(500);
   }
-  MDNS.addService("mbus","tcp",port);
-  MDNS.addService("arduino","tcp",3232);
+  MDNS.addService("mbus","tcp",port);     // service for Rocrail
+  MDNS.addService("arduino","tcp",3232);  // service for Arduino IDE OTA
   debug.print("\nWiFi connected, IP address: ");
   debug.print(WiFi.localIP());
   debug.printf(", Port: %d\nHostname: ", port);
@@ -174,11 +171,10 @@ void setup()
   uint8_t led = LOW;
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, led);
-
   while (!client) {   // listen for incoming clients
     client = server.available();
     if (client) break;
-    ArduinoOTA.handle();
+    ArduinoOTA.handle();  // OTA possible, quit Rocrail first.
     debug.print("\n\nWaiting for connection from Rocrail... ");
     delay(200);
     led = not led;
@@ -194,7 +190,7 @@ void setup()
       MDNS.end();       // done with mDNS
       break;
     }
-    delay(1000);
+    delay(200);
     led = not led;
     digitalWrite(LED_BUILTIN, led);
     debug.print(".");
@@ -298,7 +294,7 @@ void TCPSendTask(void *pvParameters)
         delay(5000);
         if (!client.connected()) {
           debug.print("\n\n   RESTART ROCRAIL!\n\n");
-          ESP.restart();
+          ESP.restart();   // restart and try again
         }
       }
     }
