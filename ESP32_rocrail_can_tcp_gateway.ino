@@ -22,7 +22,7 @@
 //   Include files
 //----------------------------------------------------------------------------------------
 
-#include <ACAN_ESP32.h> // https://github.com/pierremolinaro/acan-esp32.git
+#include <ACAN_ESP32.h>  // https://github.com/pierremolinaro/acan-esp32.git
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
@@ -35,51 +35,36 @@
 //  CAN Desired Bit Rate
 //----------------------------------------------------------------------------------------
 
-static const uint32_t DESIRED_BIT_RATE = 250UL * 1000UL; // Marklin CAN baudrate = 250Kbit/s
+static const uint32_t DESIRED_BIT_RATE = 250UL * 1000UL;  // Marklin CAN baudrate = 250Kbit/s
 
 //----------------------------------------------------------------------------------------
 //  Buffers  : Rocrail always send 13 bytes
 //----------------------------------------------------------------------------------------
 
 static const uint8_t BUFFER_SIZE = 13;
-byte cBuffer[BUFFER_SIZE]; // CAN buffer
-byte sBuffer[BUFFER_SIZE]; // Serial buffer
+byte cBuffer[BUFFER_SIZE];  // CAN buffer
+byte sBuffer[BUFFER_SIZE];  // Serial buffer
 
 //----------------------------------------------------------------------------------------
 //  Marklin hash
 //----------------------------------------------------------------------------------------
 
-uint16_t rrHash; // for Rocrail hash
+uint16_t rrHash;  // for Rocrail hash
+
+void restart() {
+    debug.println("Restarting...");
+    ESP.restart();
+}
 
 //----------------------------------------------------------------------------------------
 //  WIFI
 //----------------------------------------------------------------------------------------
-#include <WiFi.h>
-#include <ESPmDNS.h>
-#define NO_OTA_PORT
-#include <ArduinoOTA.h>
-#include "WiFi_info.h"  //  this file contains WiFi SSID, password, and hostname
-const char *ssid = WIFI_SSID;
-const char *password = WIFI_PASSWORD;
-const char *hostname = WIFI_HOSTNAME;
-const uint port = 15731;
-WiFiServer server(port);
-WiFiClient client;
 
-//----------------------------------------------------------------------------------------
-//  WiFi Event Handler (Replaces wifiMonitorTask)
-//----------------------------------------------------------------------------------------
-
-void WiFiEvent(WiFiEvent_t event) {
-    switch (event) {
-        case WIFI_EVENT_STA_DISCONNECTED:
-            debug.println("WiFi disconnected! Restarting...");
-		    ESP.restart();
-            break;
-        default:
-            break;
-    }
-}
+#include "WiFiManager.h"
+const char* hostname = "Gleisbox";
+#define PORT 15731
+WiFiManager wifiManager(hostname,PORT,restart);
+WiFiClient &client = wifiManager.getClient();
 
 //----------------------------------------------------------------------------------------
 //  Queues
@@ -88,7 +73,7 @@ void WiFiEvent(WiFiEvent_t event) {
 QueueHandle_t canToTcpQueue;
 QueueHandle_t tcpToCanQueue;
 #ifdef VERBOSE
-QueueHandle_t debugQueue; // Queue for debug messages
+QueueHandle_t debugQueue;  // Queue for debug messages
 #endif
 //----------------------------------------------------------------------------------------
 //  Debug declaration
@@ -105,18 +90,16 @@ void TCPSendTask(void *pvParameters);
 void TCPReceiveTask(void *pvParameters);
 void CANSendTask(void *pvParameters);
 #ifdef VERBOSE
-void debugFrameTask(void *pvParameters); // Debug task
+void debugFrameTask(void *pvParameters);  // Debug task
 #endif
 //----------------------------------------------------------------------------------------
 //   SETUP
 //----------------------------------------------------------------------------------------
 
-void setup()
-{
+void setup() {
   //--- Start serial
-  Serial.begin(115200); // For debug
-  while (!Serial)
-  {
+  Serial.begin(115200);  // For debug
+  while (!Serial) {
     delay(100);
   }
   Serial.println("Rocrail-Can Gateway started!");
@@ -132,62 +115,26 @@ void setup()
   ACAN_ESP32_Settings settings(DESIRED_BIT_RATE);
   settings.mDriverReceiveBufferSize = 50;
   settings.mDriverTransmitBufferSize = 50;
-  settings.mRxPin = GPIO_NUM_25; // Optional, default Rx pin is GPIO_NUM_5
-  settings.mTxPin = GPIO_NUM_32; // Optional, default Tx pin is GPIO_NUM_4
+  settings.mRxPin = GPIO_NUM_25;  // Optional, default Rx pin is GPIO_NUM_5
+  settings.mTxPin = GPIO_NUM_32;  // Optional, default Tx pin is GPIO_NUM_4
   const uint32_t errorCode = ACAN_ESP32::can.begin(settings);
-  if (errorCode)
-  {
+  if (errorCode) {
     debug.print("Configuration error 0x");
     debug.println(errorCode, HEX);
-  }
-  else
+  } else
     debug.print("Configuration CAN OK\n\n");
 
-  WiFi.setHostname(hostname);
-  WiFi.mode(WIFI_STA);
-  WiFi.onEvent(WiFiEvent); // Register the WiFi event handler
-  WiFi.begin(ssid, password);
-  debug.print("Waiting for WiFi connection");
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    debug.print(".");
-  }
-  ArduinoOTA.begin();
-  // Initialize mDNS
-  while (!MDNS.begin(hostname)) {   // Set the hostname
-    debug.println("Error setting up MDNS responder!");
-    delay(500);
-  }
-  MDNS.addService("mbus","tcp",port);     // service for Rocrail
-  MDNS.addService("arduino","tcp",3232);  // service for Arduino IDE OTA
-  debug.print("\nWiFi connected, IP address: ");
-  debug.print(WiFi.localIP());
-  debug.printf(", Port: %d\nHostname: ", port);
-  debug.print(hostname);
-  debug.println(".local");
-  server.begin();
+  // Initialize WiFi and wait for client
+  wifiManager.begin();
+  wifiManager.waitForClient();
 
-  uint8_t led = LOW;
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, led);
-  while (!client) {   // listen for incoming clients
-    client = server.available();
-    if (client) break;
-    ArduinoOTA.handle();  // OTA possible, quit Rocrail first.
-    debug.print("\n\nWaiting for connection from Rocrail... ");
-    delay(200);
-    led = not led;
-    digitalWrite(LED_BUILTIN, led);
-  }
-// loop while the client's connected
-  debug.print("connected, wating on packets..");
-  int16_t rb = 0; //!\ Do not change type int16_t See https://www.arduino.cc/reference/en/language/functions/communication/stream/streamreadbytes/
-  while (rb != BUFFER_SIZE)
-  {
-    if (client.available()) { // if there's bytes to read from the client,
+  // loop while the client's connected
+  debug.print("Waiting on packets from Rocrail...");
+  int16_t rb = 0;  //!\ Do not change type int16_t See https://www.arduino.cc/reference/en/language/functions/communication/stream/streamreadbytes/
+  bool led = HIGH;
+  while (rb != BUFFER_SIZE) {
+    if (client.available()) {  // if there's bytes to read from the client,
       rb = client.readBytes(cBuffer, BUFFER_SIZE);
-      MDNS.end();       // done with mDNS
       break;
     }
     delay(200);
@@ -196,8 +143,8 @@ void setup()
     debug.print(".");
   }
   digitalWrite(LED_BUILTIN, HIGH);
-  rrHash = ((cBuffer[2] << 8) | cBuffer[3]);   // extract the Rocrail hash
-  debug.printf("\nRocral hash: 0x%04X\n",rrHash);
+  rrHash = ((cBuffer[2] << 8) | cBuffer[3]);  // extract the Rocrail hash
+  debug.printf("\nRocral hash: 0x%04X\n", rrHash);
   CANMessage frame;
   frame.id = (cBuffer[0] << 24) | (cBuffer[1] << 16) | rrHash;
   frame.ext = true;
@@ -215,8 +162,7 @@ void setup()
   }
   if (isSent) {
     debugFrame(&frame);
-  }
-  else {
+  } else {
     constexpr uint16_t RESTART_DELAY_MS = 10000;
     debug.println("CAN frame failed to send.");
     debug.println("ESP32 will restart in 10 seconds.");
@@ -228,44 +174,40 @@ void setup()
   canToTcpQueue = xQueueCreate(100, sizeof(CANMessage));
   tcpToCanQueue = xQueueCreate(100, BUFFER_SIZE * sizeof(byte));
 #ifdef VERBOSE
-  debugQueue = xQueueCreate(100, sizeof(CANMessage)); // Create debug queue
+  debugQueue = xQueueCreate(100, sizeof(CANMessage));  // Create debug queue
 #endif
   // Create tasks
-  xTaskCreatePinnedToCore(CANReceiveTask, "CANReceiveTask", 4 * 1024, NULL, 3, NULL, 0); // priority 3 on core 0
-  xTaskCreatePinnedToCore(TCPSendTask, "TCPSendTask", 4 * 1024, NULL, 5, NULL, 1);       // priority 5 on core 1
-  xTaskCreatePinnedToCore(TCPReceiveTask, "TCPReceiveTask", 4 * 1024, NULL, 3, NULL, 1); // priority 3 on core 1
-  xTaskCreatePinnedToCore(CANSendTask, "CANSendTask", 4 * 1024, NULL, 5, NULL, 0);       // priority 5 on core 0
+  xTaskCreatePinnedToCore(CANReceiveTask, "CANReceiveTask", 4 * 1024, NULL, 3, NULL, 0);  // priority 3 on core 0
+  xTaskCreatePinnedToCore(TCPSendTask, "TCPSendTask", 4 * 1024, NULL, 5, NULL, 1);        // priority 5 on core 1
+  xTaskCreatePinnedToCore(TCPReceiveTask, "TCPReceiveTask", 4 * 1024, NULL, 3, NULL, 1);  // priority 3 on core 1
+  xTaskCreatePinnedToCore(CANSendTask, "CANSendTask", 4 * 1024, NULL, 5, NULL, 0);        // priority 5 on core 0
 #ifdef VERBOSE
-  xTaskCreatePinnedToCore(debugFrameTask, "debugFrameTask", 2 * 1024, NULL, 1, NULL, 1); // debug task with priority 1 on core 1
+  xTaskCreatePinnedToCore(debugFrameTask, "debugFrameTask", 2 * 1024, NULL, 1, NULL, 1);  // debug task with priority 1 on core 1
 #endif
-} // end setup
+}  // end setup
 
 //----------------------------------------------------------------------------------------
 //   LOOP
 //----------------------------------------------------------------------------------------
 
-void loop()
-{
+void loop() {
   vTaskDelete(NULL);
-} // Nothing to do
+}  // Nothing to do
 
 //----------------------------------------------------------------------------------------
 //   CANReceiveTask
 //----------------------------------------------------------------------------------------
 
-void CANReceiveTask(void *pvParameters)
-{
+void CANReceiveTask(void *pvParameters) {
   CANMessage frameIn;
-  while (true)
-  {
-    if (ACAN_ESP32::can.receive(frameIn))
-    {
+  while (true) {
+    if (ACAN_ESP32::can.receive(frameIn)) {
       xQueueSend(canToTcpQueue, &frameIn, portMAX_DELAY);
 #ifdef VERBOSE
-      xQueueSend(debugQueue, &frameIn, 10); // send to debug queue
+      xQueueSend(debugQueue, &frameIn, 10);  // send to debug queue
 #endif
     } else {
-        vTaskDelay(1); // Avoid busy-waiting
+      vTaskDelay(1);  // Avoid busy-waiting
     }
   }
 }
@@ -274,27 +216,23 @@ void CANReceiveTask(void *pvParameters)
 //   TCPSendTask
 //----------------------------------------------------------------------------------------
 
-void TCPSendTask(void *pvParameters)
-{
+void TCPSendTask(void *pvParameters) {
   CANMessage frameIn;
-  while (true)
-  {
-    if (xQueueReceive(canToTcpQueue, &frameIn, portMAX_DELAY))
-    {
+  while (true) {
+    if (xQueueReceive(canToTcpQueue, &frameIn, portMAX_DELAY)) {
       if (client.connected()) {
         sBuffer[0] = (frameIn.id & 0xFF000000) >> 24;
         sBuffer[1] = (frameIn.id & 0xFF0000) >> 16;
-        sBuffer[2] = (frameIn.id & 0xFF00) >> 8; // hash
-        sBuffer[3] = (frameIn.id & 0x00FF);      // hash
+        sBuffer[2] = (frameIn.id & 0xFF00) >> 8;  // hash
+        sBuffer[3] = (frameIn.id & 0x00FF);       // hash
         sBuffer[4] = frameIn.len;
-        memcpy(sBuffer+5, frameIn.data, 8);
+        memcpy(sBuffer + 5, frameIn.data, 8);
         client.write(sBuffer, BUFFER_SIZE);
-      }
-      else {  // connection to Rocrail broken
+      } else {  // connection to Rocrail broken
         delay(5000);
         if (!client.connected()) {
           debug.print("\n\n   RESTART ROCRAIL!\n\n");
-          ESP.restart();   // restart and try again
+          ESP.restart();  // restart and try again
         }
       }
     }
@@ -305,22 +243,18 @@ void TCPSendTask(void *pvParameters)
 //   TCPReceiveTask
 //----------------------------------------------------------------------------------------
 
-void TCPReceiveTask(void *pvParameters)
-{
-  while (true)
-  {
+void TCPReceiveTask(void *pvParameters) {
+  while (true) {
     // Check if the client is connected and has at least BUFFER_SIZE bytes available
-    if (client.connected() && client.available() >= BUFFER_SIZE)
-    {
+    if (client.connected() && client.available() >= BUFFER_SIZE) {
       // Read exactly BUFFER_SIZE bytes into cBuffer
-      if (client.readBytes(cBuffer, BUFFER_SIZE) == BUFFER_SIZE)
-      {
+      if (client.readBytes(cBuffer, BUFFER_SIZE) == BUFFER_SIZE) {
         // Send the data to the CAN queue
         xQueueSend(tcpToCanQueue, cBuffer, portMAX_DELAY);
       }
     } else {
       // Reduce delay for faster processing but still yield CPU time
-      vTaskDelay(1); // 1 ms delay for better responsiveness
+      vTaskDelay(1);  // 1 ms delay for better responsiveness
     }
   }
 }
@@ -329,13 +263,10 @@ void TCPReceiveTask(void *pvParameters)
 //   CANSendTask
 //----------------------------------------------------------------------------------------
 
-void CANSendTask(void *pvParameters)
-{
+void CANSendTask(void *pvParameters) {
   byte buffer[BUFFER_SIZE];
-  while (true)
-  {
-    if (xQueueReceive(tcpToCanQueue, &buffer, pdMS_TO_TICKS(5)) == pdPASS) 
-    {
+  while (true) {
+    if (xQueueReceive(tcpToCanQueue, &buffer, pdMS_TO_TICKS(5)) == pdPASS) {
       CANMessage frameOut;
       frameOut.id = (buffer[0] << 24) | (buffer[1] << 16) | rrHash;
       frameOut.ext = true;
@@ -344,7 +275,7 @@ void CANSendTask(void *pvParameters)
       memcpy(frameOut.data, &buffer[5], frameOut.len);
       const bool ok = ACAN_ESP32::can.tryToSend(frameOut);
 #ifdef VERBOSE
-      xQueueSend(debugQueue, &frameOut, 10); // send to debug queue
+      xQueueSend(debugQueue, &frameOut, 10);  // send to debug queue
 #endif
     }
   }
@@ -354,13 +285,10 @@ void CANSendTask(void *pvParameters)
 //   debugFrameTask
 //----------------------------------------------------------------------------------------
 #ifdef VERBOSE
-void debugFrameTask(void *pvParameters)
-{
+void debugFrameTask(void *pvParameters) {
   CANMessage frame;
-  while (true)
-  {
-    if (xQueueReceive(debugQueue, &frame, portMAX_DELAY))
-    {
+  while (true) {
+    if (xQueueReceive(debugQueue, &frame, portMAX_DELAY)) {
       debugFrame(&frame);
     }
   }
@@ -370,19 +298,17 @@ void debugFrameTask(void *pvParameters)
 //   debugFrame
 //----------------------------------------------------------------------------------------
 
-void debugFrame(const CANMessage *frame)
-{
+void debugFrame(const CANMessage *frame) {
   uint16_t hash = frame->id & 0xFFFF;
-  debug.printf("%-1s|H:%04X|R:%-1s|C:%02X|L:%d|", 
+  debug.printf("%-1s|H:%04X|R:%-1s|C:%02X|L:%d|",
                (hash == rrHash) ? "T" : "C",
                hash,
                (frame->id & 0x10000) ? "T" : "F",
                (frame->id & 0x1FE0000) >> 17,
                frame->len);
 
-  for (byte i = 0; i < frame->len; i++)
-  {
+  for (byte i = 0; i < frame->len; i++) {
     debug.printf("%02X ", frame->data[i]);  // Two-character width for hex values
   }
-  debug.println(); // Ensures proper line termination
+  debug.println();  // Ensures proper line termination
 }
