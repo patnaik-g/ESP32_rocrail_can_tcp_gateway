@@ -27,7 +27,7 @@
 #include <freertos/task.h>
 #include <freertos/queue.h>
 
-//#define VERBOSE
+#define VERBOSE
 #define debug Serial
 #define LED_BUILTIN 2
 
@@ -52,8 +52,8 @@ byte sBuffer[BUFFER_SIZE];  // Serial buffer
 uint16_t rrHash;  // for Rocrail hash
 
 void restart() {
-    debug.println("Restarting...");
-    ESP.restart();
+  debug.println("Restarting...");
+  ESP.restart();
 }
 
 //----------------------------------------------------------------------------------------
@@ -61,9 +61,9 @@ void restart() {
 //----------------------------------------------------------------------------------------
 
 #include "WiFiManager.h"
-const char* hostname = "Gleisbox";
+const char *hostname = "Gleisbox";
 #define PORT 15731
-WiFiManager wifiManager(hostname,PORT,restart);
+WiFiManager wifiManager(hostname, PORT, restart);
 WiFiClient &client = wifiManager.getClient();
 
 //----------------------------------------------------------------------------------------
@@ -85,10 +85,9 @@ void debugFrame(const CANMessage *);
 //  Tasks
 //----------------------------------------------------------------------------------------
 
-void CANReceiveTask(void *pvParameters);
+void CANHandlerTask(void *pvParameters);
 void TCPSendTask(void *pvParameters);
 void TCPReceiveTask(void *pvParameters);
-void CANSendTask(void *pvParameters);
 #ifdef VERBOSE
 void debugFrameTask(void *pvParameters);  // Debug task
 #endif
@@ -177,10 +176,9 @@ void setup() {
   debugQueue = xQueueCreate(100, sizeof(CANMessage));  // Create debug queue
 #endif
   // Create tasks
-  xTaskCreatePinnedToCore(CANReceiveTask, "CANReceiveTask", 4 * 1024, NULL, 3, NULL, 0);  // priority 3 on core 0
+  xTaskCreatePinnedToCore(CANHandlerTask, "CANReceiveTask", 4 * 1024, NULL, 3, NULL, 0);  // priority 3 on core 0
   xTaskCreatePinnedToCore(TCPSendTask, "TCPSendTask", 4 * 1024, NULL, 5, NULL, 1);        // priority 5 on core 1
   xTaskCreatePinnedToCore(TCPReceiveTask, "TCPReceiveTask", 4 * 1024, NULL, 3, NULL, 1);  // priority 3 on core 1
-  xTaskCreatePinnedToCore(CANSendTask, "CANSendTask", 4 * 1024, NULL, 5, NULL, 0);        // priority 5 on core 0
 #ifdef VERBOSE
   xTaskCreatePinnedToCore(debugFrameTask, "debugFrameTask", 2 * 1024, NULL, 1, NULL, 1);  // debug task with priority 1 on core 1
 #endif
@@ -195,22 +193,37 @@ void loop() {
 }  // Nothing to do
 
 //----------------------------------------------------------------------------------------
-//   CANReceiveTask
+//   CANHandlerTask
 //----------------------------------------------------------------------------------------
 
-void CANReceiveTask(void *pvParameters) {
-  CANMessage frameIn;
+void CANHandlerTask(void *pvParameters) {
+  CANMessage frame;
+  byte buffer[BUFFER_SIZE];
+
   while (true) {
-    if (ACAN_ESP32::can.receive(frameIn)) {
-      xQueueSend(canToTcpQueue, &frameIn, portMAX_DELAY);
-#ifdef VERBOSE
-      xQueueSend(debugQueue, &frameIn, 10);  // send to debug queue
-#endif
-    } else {
-      vTaskDelay(1);  // Avoid busy-waiting
+
+    // PRIORITIZE RECEIVING CAN MESSAGES
+    while (ACAN_ESP32::can.receive(frame)) {
+      xQueueSend(canToTcpQueue, &frame, portMAX_DELAY);
     }
+
+    // ONLY ATTEMPT TO SEND IF NO PENDING RECEIVES
+    if (xQueueReceive(tcpToCanQueue, &buffer, 0) == pdPASS) {
+      CANMessage frameOut;
+      frameOut.id = (buffer[0] << 24) | (buffer[1] << 16) | rrHash;
+      frameOut.ext = true;
+      frameOut.len = buffer[4];
+      memcpy(frameOut.data, &buffer[5], frameOut.len);
+
+      ACAN_ESP32::can.tryToSend(frameOut);
+#ifdef VERBOSE
+      xQueueSend(debugQueue, &frameOut, 10);  // send to debug queue
+#endif
+    }
+    vTaskDelay(1); // YIELD CPU ONLY WHEN NO WORK TO DO
   }
 }
+
 
 //----------------------------------------------------------------------------------------
 //   TCPSendTask
@@ -228,6 +241,10 @@ void TCPSendTask(void *pvParameters) {
         sBuffer[4] = frameIn.len;
         memcpy(sBuffer + 5, frameIn.data, 8);
         client.write(sBuffer, BUFFER_SIZE);
+#ifdef VERBOSE
+        xQueueSend(debugQueue, &frameIn, 10);  // send to debug queue
+#endif
+
       } else {  // connection to Rocrail broken
         delay(5000);
         if (!client.connected()) {
@@ -255,28 +272,6 @@ void TCPReceiveTask(void *pvParameters) {
     } else {
       // Reduce delay for faster processing but still yield CPU time
       vTaskDelay(1);  // 1 ms delay for better responsiveness
-    }
-  }
-}
-
-//----------------------------------------------------------------------------------------
-//   CANSendTask
-//----------------------------------------------------------------------------------------
-
-void CANSendTask(void *pvParameters) {
-  byte buffer[BUFFER_SIZE];
-  while (true) {
-    if (xQueueReceive(tcpToCanQueue, &buffer, pdMS_TO_TICKS(5)) == pdPASS) {
-      CANMessage frameOut;
-      frameOut.id = (buffer[0] << 24) | (buffer[1] << 16) | rrHash;
-      frameOut.ext = true;
-      frameOut.len = buffer[4];
-      // Directly copy the data to frameOut using memcpy for better performance
-      memcpy(frameOut.data, &buffer[5], frameOut.len);
-      const bool ok = ACAN_ESP32::can.tryToSend(frameOut);
-#ifdef VERBOSE
-      xQueueSend(debugQueue, &frameOut, 10);  // send to debug queue
-#endif
     }
   }
 }
