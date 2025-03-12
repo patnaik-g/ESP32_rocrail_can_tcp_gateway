@@ -176,11 +176,10 @@ void setup() {
   debugQueue = xQueueCreate(100, sizeof(CANMessage));  // Create debug queue
 #endif
   // Create tasks
-  xTaskCreatePinnedToCore(CANHandlerTask, "CANReceiveTask", 4 * 1024, NULL, 3, NULL, 0);  // priority 3 on core 0
-  xTaskCreatePinnedToCore(TCPSendTask, "TCPSendTask", 4 * 1024, NULL, 5, NULL, 1);        // priority 5 on core 1
-  xTaskCreatePinnedToCore(TCPReceiveTask, "TCPReceiveTask", 4 * 1024, NULL, 3, NULL, 1);  // priority 3 on core 1
-#ifdef VERBOSE
-  xTaskCreatePinnedToCore(debugFrameTask, "debugFrameTask", 2 * 1024, NULL, 1, NULL, 1);  // debug task with priority 1 on core 1
+  xTaskCreatePinnedToCore(TCPHandlerTask, "TCPHandlerTask", 4 * 1024, NULL, 5, NULL, 0);  // priority 5 on core 1
+  xTaskCreatePinnedToCore(CANHandlerTask, "CANHandlerTask", 4 * 1024, NULL, 5, NULL, 1);  // priority 3 on core 0
+ #ifdef VERBOSE
+  xTaskCreatePinnedToCore(debugFrameTask, "debugFrameTask", 2 * 1024, NULL, 1, NULL, tskNO_AFFINITY);  // debug task with priority 1 on any core
 #endif
 }  // end setup
 
@@ -224,15 +223,24 @@ void CANHandlerTask(void *pvParameters) {
   }
 }
 
-
 //----------------------------------------------------------------------------------------
-//   TCPSendTask
+//   TCPHndlerTask
 //----------------------------------------------------------------------------------------
 
-void TCPSendTask(void *pvParameters) {
+void TCPHandlerTask(void *pvParameters) {
   CANMessage frameIn;
+
   while (true) {
-    if (xQueueReceive(canToTcpQueue, &frameIn, portMAX_DELAY)) {
+    // Prioritize receiving data
+    if (client.available() >= BUFFER_SIZE) {
+      if (client.readBytes(cBuffer, BUFFER_SIZE) == BUFFER_SIZE) {
+        xQueueSend(tcpToCanQueue, cBuffer, portMAX_DELAY);
+      }
+      continue; // Immediately check for more data before sending
+    }
+
+    // If no data to receive, attempt to send out CAN frames
+    if (xQueueReceive(canToTcpQueue, &frameIn, 0)) {  // Non-blocking check
       if (client.connected()) {
         sBuffer[0] = (frameIn.id & 0xFF000000) >> 24;
         sBuffer[1] = (frameIn.id & 0xFF0000) >> 16;
@@ -244,34 +252,16 @@ void TCPSendTask(void *pvParameters) {
 #ifdef VERBOSE
         xQueueSend(debugQueue, &frameIn, 10);  // send to debug queue
 #endif
-
       } else {  // connection to Rocrail broken
         delay(5000);
         if (!client.connected()) {
           debug.print("\n\n   RESTART ROCRAIL!\n\n");
-          ESP.restart();  // restart and try again
+          restart();  // restart and try again
         }
       }
-    }
-  }
-}
-
-//----------------------------------------------------------------------------------------
-//   TCPReceiveTask
-//----------------------------------------------------------------------------------------
-
-void TCPReceiveTask(void *pvParameters) {
-  while (true) {
-    // Check if the client is connected and has at least BUFFER_SIZE bytes available
-    if (client.connected() && client.available() >= BUFFER_SIZE) {
-      // Read exactly BUFFER_SIZE bytes into cBuffer
-      if (client.readBytes(cBuffer, BUFFER_SIZE) == BUFFER_SIZE) {
-        // Send the data to the CAN queue
-        xQueueSend(tcpToCanQueue, cBuffer, portMAX_DELAY);
-      }
     } else {
-      // Reduce delay for faster processing but still yield CPU time
-      vTaskDelay(1);  // 1 ms delay for better responsiveness
+      // Neither receiving nor sending is needed, so yield CPU time
+      vTaskDelay(1);
     }
   }
 }
