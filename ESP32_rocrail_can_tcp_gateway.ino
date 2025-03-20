@@ -114,8 +114,8 @@ void setup() {
   ACAN_ESP32_Settings settings(DESIRED_BIT_RATE);
   settings.mDriverReceiveBufferSize = 50;
   settings.mDriverTransmitBufferSize = 50;
-  settings.mRxPin = GPIO_NUM_25;  // Optional, default Rx pin is GPIO_NUM_5
-  settings.mTxPin = GPIO_NUM_32;  // Optional, default Tx pin is GPIO_NUM_4
+  settings.mRxPin = GPIO_NUM_36;  // Optional, default Rx pin is GPIO_NUM_5
+  settings.mTxPin = GPIO_NUM_26;  // Optional, default Tx pin is GPIO_NUM_4
   const uint32_t errorCode = ACAN_ESP32::can.begin(settings);
   if (errorCode) {
     debug.print("Configuration error 0x");
