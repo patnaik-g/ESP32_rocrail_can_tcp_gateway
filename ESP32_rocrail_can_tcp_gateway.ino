@@ -51,6 +51,10 @@ byte sBuffer[BUFFER_SIZE];  // Serial buffer
 
 uint16_t rrHash;  // for Rocrail hash
 
+//----------------------------------------------------------------------------------------
+//   Restart ESP32
+//----------------------------------------------------------------------------------------
+
 void restart() {
   debug.println("Restarting...");
   ESP.restart();
@@ -142,33 +146,7 @@ void setup() {
     debug.print(".");
   }
   digitalWrite(LED_BUILTIN, HIGH);
-  rrHash = ((cBuffer[2] << 8) | cBuffer[3]);  // extract the Rocrail hash
-  debug.printf("\nRocral hash: 0x%04X\n", rrHash);
-  CANMessage frame;
-  frame.id = (cBuffer[0] << 24) | (cBuffer[1] << 16) | rrHash;
-  frame.ext = true;
-  frame.len = cBuffer[4];
-  for (byte i = 0; i < frame.len; i++)
-    frame.data[i] = cBuffer[i + 5];
 
-  bool isSent = false;
-  uint8_t attempts = 0;
-  constexpr uint8_t MAX_RETRIES = 5;
-  while (!isSent && attempts < MAX_RETRIES) {
-    isSent = ACAN_ESP32::can.tryToSend(frame);
-    ++attempts;
-    delay(100);
-  }
-  if (isSent) {
-    debugFrame(&frame);
-  } else {
-    constexpr uint16_t RESTART_DELAY_MS = 10000;
-    debug.println("CAN frame failed to send.");
-    debug.println("ESP32 will restart in 10 seconds.");
-    debug.println("/!\\ Relaunch Rocrail.");
-    delay(RESTART_DELAY_MS);
-    ESP.restart();
-  }
   // Create queues
   canToTcpQueue = xQueueCreate(100, sizeof(CANMessage));
   tcpToCanQueue = xQueueCreate(100, BUFFER_SIZE * sizeof(byte));
@@ -197,6 +175,7 @@ void loop() {
 
 void CANHandlerTask(void *pvParameters) {
   CANMessage frame;
+  static CANMessage frameOut;
   byte buffer[BUFFER_SIZE];
 
   while (true) {
@@ -208,9 +187,12 @@ void CANHandlerTask(void *pvParameters) {
 
     // ONLY ATTEMPT TO SEND IF NO PENDING RECEIVES
     if (xQueueReceive(tcpToCanQueue, &buffer, 0) == pdPASS) {
-      CANMessage frameOut;
+      if (!rrHash) {
+        rrHash = ((buffer[2] << 8) | buffer[3]);  // extract the Rocrail hash
+        debug.printf("\nRocral hash: 0x%04X\n", rrHash);
+        frameOut.ext = true;
+      }
       frameOut.id = (buffer[0] << 24) | (buffer[1] << 16) | rrHash;
-      frameOut.ext = true;
       frameOut.len = buffer[4];
       memcpy(frameOut.data, &buffer[5], frameOut.len);
 
