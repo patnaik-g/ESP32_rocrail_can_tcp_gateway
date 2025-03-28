@@ -46,16 +46,19 @@ bool WiFiManager::connectToWiFi(const String &ssid, const String &password) {
         debug.print("IP Address: ");
         debug.println(WiFi.localIP());
 
-        ArduinoOTA.begin();
+        ArduinoOTA.begin();      // Start OTA
+        TelnetStream.begin();    // Start TelnetStream
 
         while (!MDNS.begin(hostname)) {
             debug.println("Error setting up MDNS responder!");
             delay(500);
         }
         MDNS.addService("mbus", "tcp", port);
+        MDNS.addService("telnet", "tcp", 23);
 
         debug.printf("Port: %d\nHostname: %s.local\n", port, hostname);
         server.begin();
+        waitForClient();
         return true;
     }
 
@@ -175,7 +178,10 @@ void WiFiManager::waitForClient() {
         delay(200);
         led = !led;
         digitalWrite(LED_BUILTIN, led);
+        debug.print(".");
+        TelnetStream.print(".");
     }
-    debug.println("Client connected!");
-    MDNS.end();
+    debug.println(" Client connected!");
+    TelnetStream.println(" Client connected!");
+//    MDNS.end();
 }

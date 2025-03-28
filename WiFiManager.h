@@ -6,6 +6,7 @@
 #include <Preferences.h>
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
+#include <TelnetStream.h>
 
 typedef void (*WiFiEventCallback)();
 

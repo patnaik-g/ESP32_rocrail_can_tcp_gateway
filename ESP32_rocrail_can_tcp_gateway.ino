@@ -100,6 +100,8 @@ void debugFrameTask(void *pvParameters);  // Debug task
 //----------------------------------------------------------------------------------------
 
 void setup() {
+  //--- Turn off bluetooth, not used
+  btStop();
   //--- Start serial
   Serial.begin(115200);  // For debug
   while (!Serial) {
@@ -129,21 +131,17 @@ void setup() {
 
   // Initialize WiFi and wait for client
   wifiManager.begin();
-  wifiManager.waitForClient();
 
   // loop while the client's connected
   debug.print("Waiting on packets from Rocrail...");
-  int16_t rb = 0;  //!\ Do not change type int16_t See https://www.arduino.cc/reference/en/language/functions/communication/stream/streamreadbytes/
+  TelnetStream.print("Waiting on packets from Rocrail...");
   bool led = HIGH;
-  while (rb != BUFFER_SIZE) {
-    if (client.available()) {  // if there's bytes to read from the client,
-      rb = client.readBytes(cBuffer, BUFFER_SIZE);
-      break;
-    }
+  while (!client.available()) {  // if there's bytes to read from the client,
     delay(200);
     led = not led;
     digitalWrite(LED_BUILTIN, led);
     debug.print(".");
+    TelnetStream.print(".");
   }
   digitalWrite(LED_BUILTIN, HIGH);
 
@@ -157,7 +155,7 @@ void setup() {
   xTaskCreatePinnedToCore(TCPHandlerTask, "TCPHandlerTask", 4 * 1024, NULL, 5, NULL, 0);  // priority 5 on core 1
   xTaskCreatePinnedToCore(CANHandlerTask, "CANHandlerTask", 4 * 1024, NULL, 5, NULL, 1);  // priority 3 on core 0
  #ifdef VERBOSE
-  xTaskCreatePinnedToCore(debugFrameTask, "debugFrameTask", 2 * 1024, NULL, 1, NULL, tskNO_AFFINITY);  // debug task with priority 1 on any core
+  xTaskCreatePinnedToCore(debugFrameTask, "debugFrameTask", 4 * 1024, NULL, 1, NULL, tskNO_AFFINITY);  // debug task with priority 1 on any core
 #endif
 }  // end setup
 
@@ -190,6 +188,7 @@ void CANHandlerTask(void *pvParameters) {
       if (!rrHash) {
         rrHash = ((buffer[2] << 8) | buffer[3]);  // extract the Rocrail hash
         debug.printf("\nRocral hash: 0x%04X\n", rrHash);
+        TelnetStream.printf("\nRocral hash: 0x%04X\n", rrHash);
         frameOut.ext = true;
       }
       frameOut.id = (buffer[0] << 24) | (buffer[1] << 16) | rrHash;
@@ -251,6 +250,7 @@ void TCPHandlerTask(void *pvParameters) {
 //----------------------------------------------------------------------------------------
 //   debugFrameTask
 //----------------------------------------------------------------------------------------
+
 #ifdef VERBOSE
 void debugFrameTask(void *pvParameters) {
   CANMessage frame;
@@ -260,22 +260,32 @@ void debugFrameTask(void *pvParameters) {
     }
   }
 }
-#endif
+
 //----------------------------------------------------------------------------------------
 //   debugFrame
 //----------------------------------------------------------------------------------------
 
 void debugFrame(const CANMessage *frame) {
   uint16_t hash = frame->id & 0xFFFF;
-  debug.printf("%-1s|H:%04X|R:%-1s|C:%02X|L:%d|",
-               (hash == rrHash) ? "T" : "C",
-               hash,
-               (frame->id & 0x10000) ? "T" : "F",
-               (frame->id & 0x1FE0000) >> 17,
-               frame->len);
+   // Prepare the base debug string
+  char debugStr[30];
+  snprintf(debugStr, sizeof(debugStr), 
+           "%-1s|H:%04X|R:%-1s|C:%02X|L:%d|",
+           (hash == rrHash) ? "T" : "C",
+           hash,
+           (frame->id & 0x10000) ? "T" : "F",
+           (frame->id & 0x1FE0000) >> 17,
+           frame->len);
+  
+  // Print to both Serial and Telnet
+//  debug.print(debugStr);
+  TelnetStream.print(debugStr);
 
   for (byte i = 0; i < frame->len; i++) {
-    debug.printf("%02X ", frame->data[i]);  // Two-character width for hex values
+//    debug.printf("%02X ", frame->data[i]);  // Two-character width for hex values
+    TelnetStream.printf("%02X ", frame->data[i]);  // Two-character width for hex values
   }
   debug.println();  // Ensures proper line termination
+  TelnetStream.println();  // Ensures proper line termination
 }
+#endif
