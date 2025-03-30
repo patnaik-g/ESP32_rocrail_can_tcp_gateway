@@ -212,6 +212,7 @@ void TCPHandlerTask(void *pvParameters) {
   CANMessage frameIn;
 
   while (true) {
+ 
     // Prioritize receiving data
     if (client.available() >= BUFFER_SIZE) {
       if (client.readBytes(cBuffer, BUFFER_SIZE) == BUFFER_SIZE) {
@@ -220,9 +221,19 @@ void TCPHandlerTask(void *pvParameters) {
       continue; // Immediately check for more data before sending
     }
 
+    if (!client.connected()) {  // connection to Rocrail broken
+      debug.println("Rocrail diconnected!");
+      TelnetStream.println("Rocrail diconnected!");
+      delay(5000);
+      if (!client.connected()) {
+        debug.print("\n\n   RESTART ROCRAIL!\n\n");
+        TelnetStream.print("\n\n   RESTART ROCRAIL!\n\n");
+        restart();  // restart and try again
+      }
+    }
+
     // If no data to receive, attempt to send out CAN frames
     if (xQueueReceive(canToTcpQueue, &frameIn, 0)) {  // Non-blocking check
-      if (client.connected()) {
         sBuffer[0] = (frameIn.id & 0xFF000000) >> 24;
         sBuffer[1] = (frameIn.id & 0xFF0000) >> 16;
         sBuffer[2] = (frameIn.id & 0xFF00) >> 8;  // hash
@@ -233,13 +244,6 @@ void TCPHandlerTask(void *pvParameters) {
 #ifdef VERBOSE
         xQueueSend(debugQueue, &frameIn, 10);  // send to debug queue
 #endif
-      } else {  // connection to Rocrail broken
-        delay(5000);
-        if (!client.connected()) {
-          debug.print("\n\n   RESTART ROCRAIL!\n\n");
-          restart();  // restart and try again
-        }
-      }
     } else {
       // Neither receiving nor sending is needed, so yield CPU time
       vTaskDelay(1);
@@ -278,11 +282,11 @@ void debugFrame(const CANMessage *frame) {
            frame->len);
   
   // Print to both Serial and Telnet
-//  debug.print(debugStr);
+  debug.print(debugStr);
   TelnetStream.print(debugStr);
 
   for (byte i = 0; i < frame->len; i++) {
-//    debug.printf("%02X ", frame->data[i]);  // Two-character width for hex values
+    debug.printf("%02X ", frame->data[i]);  // Two-character width for hex values
     TelnetStream.printf("%02X ", frame->data[i]);  // Two-character width for hex values
   }
   debug.println();  // Ensures proper line termination
