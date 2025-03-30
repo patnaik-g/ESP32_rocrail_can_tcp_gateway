@@ -7,7 +7,7 @@ Please see the full presentation of the project at https://www.locoduino.org/spi
 Changes/improvements include a WiFi manager with OTA capability and debugging via telnet.
 The manager will set up an access point to input WiFi credentials on initial setup.
 Performance improvements come from streamlining the code and reducing the number to tasks from 4 to 2.
-(CAN and WiFi are both half duplex, so seperate send/receive tasks are unnecessary).
+(CAN and WiFi are both half duplex, so separate send/receive tasks are unnecessary).
 
 ChatGPT was used extensively.
 
