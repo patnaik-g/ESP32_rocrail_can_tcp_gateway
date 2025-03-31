@@ -71,6 +71,12 @@ WiFiManager wifiManager(hostname, PORT, restart);
 WiFiClient &client = wifiManager.getClient();
 
 //----------------------------------------------------------------------------------------
+//  Logger
+//----------------------------------------------------------------------------------------
+
+#include "logger.h"  // This needs to be done aftr WiFiManager.h
+
+//----------------------------------------------------------------------------------------
 //  Queues
 //----------------------------------------------------------------------------------------
 
@@ -133,15 +139,13 @@ void setup() {
   wifiManager.begin();
 
   // loop while the client's connected
-  debug.print("Waiting on packets from Rocrail...");
-  TelnetStream.print("Waiting on packets from Rocrail...");
+  logger.print("Waiting on packets from Rocrail...");
   bool led = HIGH;
   while (!client.available()) {  // if there's bytes to read from the client,
     delay(200);
     led = not led;
     digitalWrite(LED_BUILTIN, led);
-    debug.print(".");
-    TelnetStream.print(".");
+    logger.print(".");
   }
   digitalWrite(LED_BUILTIN, HIGH);
 
@@ -187,8 +191,7 @@ void CANHandlerTask(void *pvParameters) {
     if (xQueueReceive(tcpToCanQueue, &buffer, 0) == pdPASS) {
       if (!rrHash) {
         rrHash = ((buffer[2] << 8) | buffer[3]);  // extract the Rocrail hash
-        debug.printf("\nRocral hash: 0x%04X\n", rrHash);
-        TelnetStream.printf("\nRocral hash: 0x%04X\n", rrHash);
+        logger.printf("\nRocral hash: 0x%04X\n", rrHash);
         frameOut.ext = true;
       }
       frameOut.id = (buffer[0] << 24) | (buffer[1] << 16) | rrHash;
@@ -222,13 +225,11 @@ void TCPHandlerTask(void *pvParameters) {
     }
 
     if (!client.connected()) {  // connection to Rocrail broken
-      debug.println("Rocrail diconnected!");
-      TelnetStream.println("Rocrail diconnected!");
-      delay(5000);
+      logger.println("Rocrail diconnected!");
+       delay(5000);
       if (!client.connected()) {
-        debug.print("\n\n   RESTART ROCRAIL!\n\n");
-        TelnetStream.print("\n\n   RESTART ROCRAIL!\n\n");
-        restart();  // restart and try again
+        logger.print("\n\n   RESTART ROCRAIL!\n\n");
+        wifiManager.waitForClient();
       }
     }
 
@@ -282,14 +283,11 @@ void debugFrame(const CANMessage *frame) {
            frame->len);
   
   // Print to both Serial and Telnet
-  debug.print(debugStr);
-  TelnetStream.print(debugStr);
+  logger.print(debugStr);
 
   for (byte i = 0; i < frame->len; i++) {
-    debug.printf("%02X ", frame->data[i]);  // Two-character width for hex values
-    TelnetStream.printf("%02X ", frame->data[i]);  // Two-character width for hex values
+    logger.printf("%02X ", frame->data[i]);  // Two-character width for hex values
   }
-  debug.println();  // Ensures proper line termination
-  TelnetStream.println();  // Ensures proper line termination
+  logger.println();  // Ensures proper line termination
 }
 #endif

@@ -168,27 +168,23 @@ WiFiServer& WiFiManager::getServer() {
 }
 
 void WiFiManager::waitForClient() {
-  debug.print("Waiting for client connection...");
   uint8_t led = LOW;
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, led);
-  int i = 0;
+  int i = 60;
   while (true) {
     client = server.available();
     if (client) break;
+    if (i == 60) {
+      logger.print("\nWaiting for client connection...");
+      i = 0;
+    }
     ArduinoOTA.handle();
     delay(1000);
     led = !led;
     digitalWrite(LED_BUILTIN, led);
-    debug.print(".");
-    TelnetStream.print(".");
+    logger.print(".");
     i++;
-    if (i == 60) {
-      debug.print("\nWaiting for client connection...");
-      TelnetStream.print("\nWaiting for client connection...");
-      i = 0;
-    }
   }
-  debug.println(" Client connected!");
-  TelnetStream.println(" Client connected!");
+  logger.println(" Client connected!");
 }
