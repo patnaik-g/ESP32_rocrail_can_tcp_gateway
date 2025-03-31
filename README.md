@@ -3,7 +3,7 @@
 This project enables communication between **Rocrail**, a model railroad control software, and the **Märklin CAN bus** using a dual-core **ESP32**. It serves as a bridge, translating messages between **TCP and CAN**. The implementation consists of **two main tasks**, with an optional debug task.
 
 ## Project Origin
-This code is a fork of **Christophe Bobille’s [ESP32_rocrail_can_tcp_gateway](https://www.locoduino.org/spip.php?article361)**. 
+This code is a fork of **Christophe Bobille’s ESP32_rocrail_can_tcp_gateway. See the original article (in French) [here](https://www.locoduino.org/spip.php?article361)**. 
 
 Special thanks to **Christophe Bobille** for the original implementation!
 
